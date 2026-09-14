@@ -1,10 +1,11 @@
 import {
   BENCHMARKS,
+  CITY_LABELS,
   DEFAULT_SALARIES,
   FOOD_COST_BY_TYPE,
-  OCCUPANCY_BY_TYPE,
-  RENT_PER_SQM,
-  TICKET_BY_TYPE,
+  getOccupancyBenchmark,
+  getRentBenchmark,
+  getTicketBenchmark,
 } from '@/data/france-benchmarks';
 import type {
   CapexItem,
@@ -17,24 +18,13 @@ import type {
   RestaurantTypeId,
   SimulationInput,
   StaffMember,
+  StaffRoleId,
   TaxSettings,
 } from '@/types/models';
 
-export const CITY_OPTIONS: Array<{ id: CityId; label: string }> = [
-  { id: 'paris', label: 'Paris' },
-  { id: 'lyon', label: 'Lyon' },
-  { id: 'marseille', label: 'Marseille' },
-  { id: 'bordeaux', label: 'Bordeaux' },
-  { id: 'lille', label: 'Lille' },
-  { id: 'toulouse', label: 'Toulouse' },
-  { id: 'nantes', label: 'Nantes' },
-  { id: 'nice', label: 'Nice' },
-  { id: 'strasbourg', label: 'Strasbourg' },
-  { id: 'montpellier', label: 'Montpellier' },
-  { id: 'rennes', label: 'Rennes' },
-  { id: 'medium_city', label: 'Ville moyenne' },
-  { id: 'other', label: 'Autre' },
-];
+export const CITY_OPTIONS: Array<{ id: CityId; label: string }> = (
+  Object.keys(CITY_LABELS) as CityId[]
+).map((id) => ({ id, label: CITY_LABELS[id] }));
 
 export const LOCATION_OPTIONS: Array<{ id: LocationTypeId; label: string }> = [
   { id: 'premium_center', label: 'Centre-ville premium' },
@@ -57,97 +47,175 @@ export const RESTAURANT_TYPE_OPTIONS: Array<{ id: RestaurantTypeId; label: strin
   { id: 'other', label: 'Autre' },
 ];
 
-const DEFAULT_STAFF_BY_TYPE: Record<RestaurantTypeId, StaffRolePreset[]> = {
-  fast_food: [
-    { role: 'manager', count: 1 },
-    { role: 'cook', count: 2 },
-    { role: 'cashier', count: 2 },
-    { role: 'polyvalent', count: 2 },
-  ],
-  burger: [
-    { role: 'manager', count: 1 },
-    { role: 'cook', count: 2 },
-    { role: 'cashier', count: 1 },
-    { role: 'waiter', count: 2 },
-  ],
-  pizza: [
-    { role: 'manager', count: 1 },
-    { role: 'cook', count: 2 },
-    { role: 'cashier', count: 1 },
-    { role: 'delivery', count: 1 },
-  ],
-  traditional: [
-    { role: 'manager', count: 1 },
-    { role: 'head_chef', count: 1 },
-    { role: 'cook', count: 2 },
-    { role: 'commis', count: 1 },
-    { role: 'waiter', count: 3 },
-    { role: 'dishwasher', count: 1 },
-  ],
-  brasserie: [
-    { role: 'manager', count: 1 },
-    { role: 'head_chef', count: 1 },
-    { role: 'cook', count: 2 },
-    { role: 'waiter', count: 4 },
-    { role: 'bartender', count: 1 },
-  ],
-  cafe_brunch: [
-    { role: 'manager', count: 1 },
-    { role: 'cook', count: 1 },
-    { role: 'barista', count: 2 },
-    { role: 'waiter', count: 2 },
-  ],
-  asian: [
-    { role: 'manager', count: 1 },
-    { role: 'head_chef', count: 1 },
-    { role: 'cook', count: 2 },
-    { role: 'waiter', count: 2 },
-  ],
-  premium: [
-    { role: 'manager', count: 1 },
-    { role: 'head_chef', count: 1 },
-    { role: 'sous_chef', count: 1 },
-    { role: 'chef_de_partie', count: 2 },
-    { role: 'commis', count: 2 },
-    { role: 'room_manager', count: 1 },
-    { role: 'waiter', count: 4 },
-    { role: 'bartender', count: 1 },
-  ],
-  dark_kitchen: [
-    { role: 'manager', count: 1 },
-    { role: 'cook', count: 3 },
-    { role: 'delivery', count: 2 },
-  ],
-  other: [
-    { role: 'manager', count: 1 },
-    { role: 'head_chef', count: 1 },
-    { role: 'cook', count: 2 },
-    { role: 'waiter', count: 2 },
-  ],
+/**
+ * Productivité de référence : nombre de couverts servis par jour et par ETP,
+ * tous postes confondus (cuisine, salle, encadrement).
+ *
+ * Ces valeurs sont calibrées pour que l'effectif par défaut place la masse
+ * salariale dans la fourchette du panel FIDUCIAL (24 % à 38 % du CA) plutôt
+ * que sur un effectif fixe indépendant de la taille de l'établissement.
+ */
+export const COVERS_PER_FTE: Record<RestaurantTypeId, number> = {
+  fast_food: 20,
+  burger: 18,
+  pizza: 18,
+  traditional: 11,
+  brasserie: 12,
+  cafe_brunch: 13,
+  asian: 12,
+  premium: 6,
+  dark_kitchen: 22,
+  other: 12,
 };
 
-interface StaffRolePreset {
-  role: StaffMember['role'];
-  count: number;
+interface TeamTemplate {
+  /** Postes présents quel que soit le volume d'activité. */
+  fixed: Array<{ role: StaffRoleId; fte: number }>;
+  /** Répartition de l'effectif restant. */
+  pool: Array<{ role: StaffRoleId; weight: number }>;
 }
+
+const TEAM_TEMPLATE: Record<RestaurantTypeId, TeamTemplate> = {
+  fast_food: {
+    fixed: [{ role: 'manager', fte: 1 }],
+    pool: [
+      { role: 'cook', weight: 0.4 },
+      { role: 'cashier', weight: 0.3 },
+      { role: 'polyvalent', weight: 0.3 },
+    ],
+  },
+  burger: {
+    fixed: [{ role: 'manager', fte: 1 }],
+    pool: [
+      { role: 'cook', weight: 0.4 },
+      { role: 'cashier', weight: 0.2 },
+      { role: 'waiter', weight: 0.4 },
+    ],
+  },
+  pizza: {
+    fixed: [{ role: 'head_chef', fte: 1 }],
+    pool: [
+      { role: 'cook', weight: 0.4 },
+      { role: 'cashier', weight: 0.25 },
+      { role: 'delivery', weight: 0.35 },
+    ],
+  },
+  traditional: {
+    fixed: [{ role: 'head_chef', fte: 1 }],
+    pool: [
+      { role: 'cook', weight: 0.25 },
+      { role: 'commis', weight: 0.15 },
+      { role: 'waiter', weight: 0.45 },
+      { role: 'dishwasher', weight: 0.15 },
+    ],
+  },
+  brasserie: {
+    fixed: [{ role: 'head_chef', fte: 1 }],
+    pool: [
+      { role: 'cook', weight: 0.25 },
+      { role: 'commis', weight: 0.1 },
+      { role: 'waiter', weight: 0.4 },
+      { role: 'bartender', weight: 0.15 },
+      { role: 'dishwasher', weight: 0.1 },
+    ],
+  },
+  cafe_brunch: {
+    fixed: [{ role: 'manager', fte: 1 }],
+    pool: [
+      { role: 'cook', weight: 0.3 },
+      { role: 'barista', weight: 0.35 },
+      { role: 'waiter', weight: 0.35 },
+    ],
+  },
+  asian: {
+    fixed: [{ role: 'head_chef', fte: 1 }],
+    pool: [
+      { role: 'cook', weight: 0.3 },
+      { role: 'commis', weight: 0.15 },
+      { role: 'waiter', weight: 0.4 },
+      { role: 'dishwasher', weight: 0.15 },
+    ],
+  },
+  premium: {
+    fixed: [
+      { role: 'head_chef', fte: 1 },
+      { role: 'sous_chef', fte: 1 },
+      { role: 'room_manager', fte: 1 },
+    ],
+    pool: [
+      { role: 'chef_de_partie', weight: 0.25 },
+      { role: 'commis', weight: 0.2 },
+      { role: 'waiter', weight: 0.35 },
+      { role: 'dishwasher', weight: 0.1 },
+      { role: 'bartender', weight: 0.1 },
+    ],
+  },
+  dark_kitchen: {
+    fixed: [{ role: 'manager', fte: 1 }],
+    pool: [
+      { role: 'cook', weight: 0.7 },
+      { role: 'polyvalent', weight: 0.3 },
+    ],
+  },
+  other: {
+    fixed: [{ role: 'head_chef', fte: 1 }],
+    pool: [
+      { role: 'cook', weight: 0.3 },
+      { role: 'waiter', weight: 0.5 },
+      { role: 'dishwasher', weight: 0.2 },
+    ],
+  },
+};
 
 let staffCounter = 0;
 
-export function createStaffMember(role: StaffMember['role'], count = 1): StaffMember {
+export function createStaffMember(
+  role: StaffRoleId,
+  count = 1,
+  weeklyHours = 35,
+): StaffMember {
   staffCounter += 1;
   return {
     id: `staff-${staffCounter}`,
     role,
     count,
     grossMonthlySalary: DEFAULT_SALARIES[role].value,
-    employmentType: 'full_time',
-    weeklyHours: 35,
+    employmentType: weeklyHours >= 35 ? 'full_time' : 'part_time',
+    weeklyHours,
     mealsPerDay: 1,
   };
 }
 
-export function createStaffForType(type: RestaurantTypeId): StaffMember[] {
-  return DEFAULT_STAFF_BY_TYPE[type].map((item) => createStaffMember(item.role, item.count));
+/** Convertit un volume d'ETP en effectif réel, en complétant par du temps partiel. */
+function toStaffMember(role: StaffRoleId, fte: number): StaffMember | null {
+  if (fte < 0.25) return null;
+
+  const count = Math.max(1, Math.round(fte));
+  const weeklyHours = Math.min(39, Math.max(10, Math.round((35 * fte) / count)));
+
+  return createStaffMember(role, count, weeklyHours);
+}
+
+/**
+ * Construit une équipe par défaut dimensionnée pour le volume d'activité.
+ * Le dirigeant n'est pas salarié par défaut dans les concepts indépendants :
+ * l'utilisateur doit ajouter sa rémunération s'il se salarie.
+ */
+export function createStaffForType(
+  type: RestaurantTypeId,
+  coversPerDay: number,
+): StaffMember[] {
+  const template = TEAM_TEMPLATE[type];
+  const fixedFte = template.fixed.reduce((sum, item) => sum + item.fte, 0);
+  const targetFte = Math.max(fixedFte, coversPerDay / COVERS_PER_FTE[type]);
+  const poolFte = targetFte - fixedFte;
+
+  const members = [
+    ...template.fixed.map((item) => toStaffMember(item.role, item.fte)),
+    ...template.pool.map((item) => toStaffMember(item.role, poolFte * item.weight)),
+  ];
+
+  return members.filter((member): member is StaffMember => member !== null);
 }
 
 export function estimateMonthlyRent(
@@ -155,12 +223,52 @@ export function estimateMonthlyRent(
   locationType: LocationTypeId,
   surfaceSqm: number,
 ): number {
-  const benchmark = RENT_PER_SQM[city][locationType];
+  const benchmark = getRentBenchmark(city, locationType);
   return Math.round((benchmark.value * surfaceSqm) / 12);
 }
 
-export function createTicketBreakdown(type: RestaurantTypeId) {
-  const ticket = TICKET_BY_TYPE[type].value;
+/**
+ * Nombre de rotations de salle par jour, et non de plages horaires : un couvert
+ * occupe une place pendant la durée du repas, donc une même place se revend
+ * plusieurs fois par service en restauration rapide (repas court) alors qu'elle
+ * ne se revend quasiment pas en gastronomique (repas long).
+ */
+export const SERVICES_PER_DAY_BY_TYPE: Record<RestaurantTypeId, number> = {
+  fast_food: 4,
+  burger: 3,
+  pizza: 3,
+  traditional: 2,
+  brasserie: 2.5,
+  cafe_brunch: 3,
+  asian: 2.5,
+  premium: 1.5,
+  dark_kitchen: 4,
+  other: 2,
+};
+
+/** Répartition par défaut du chiffre d'affaires entre salle, emporté et livraison. */
+export const CHANNEL_MIX_BY_TYPE: Record<
+  RestaurantTypeId,
+  { takeawayShare: number; deliveryShare: number }
+> = {
+  fast_food: { takeawayShare: 0.35, deliveryShare: 0.15 },
+  burger: { takeawayShare: 0.2, deliveryShare: 0.15 },
+  pizza: { takeawayShare: 0.3, deliveryShare: 0.25 },
+  traditional: { takeawayShare: 0.05, deliveryShare: 0.03 },
+  brasserie: { takeawayShare: 0.05, deliveryShare: 0.03 },
+  cafe_brunch: { takeawayShare: 0.2, deliveryShare: 0.05 },
+  asian: { takeawayShare: 0.15, deliveryShare: 0.15 },
+  premium: { takeawayShare: 0, deliveryShare: 0 },
+  dark_kitchen: { takeawayShare: 0.1, deliveryShare: 0.85 },
+  other: { takeawayShare: 0.08, deliveryShare: 0.05 },
+};
+
+export function createTicketBreakdown(
+  type: RestaurantTypeId,
+  city: CityId = 'medium_city',
+  locationType: LocationTypeId = 'city_center',
+) {
+  const ticket = getTicketBenchmark(type, city, locationType).value;
   if (type === 'fast_food' || type === 'burger' || type === 'pizza' || type === 'dark_kitchen') {
     return {
       food: ticket * 0.75,
@@ -234,14 +342,37 @@ export const DEFAULT_TAX: TaxSettings = {
   reducedCorporateTaxThreshold: 42500,
 };
 
+/**
+ * Charges d'exploitation par défaut, exprimées en part du chiffre d'affaires HT.
+ *
+ * Le panel FIDUCIAL situe les « autres charges externes » autour de 15 % du CA
+ * et les « impôts et taxes » autour de 2 %, hors loyer. Les postes ci-dessous
+ * reconstituent cette enveloppe plutôt que d'appliquer des montants forfaitaires
+ * indépendants de la taille de l'établissement.
+ */
+const OPERATING_COST_SHARE = {
+  utilities: 0.035,
+  insurance: 0.006,
+  cleaning: 0.009,
+  maintenance: 0.01,
+  marketing: 0.015,
+  banking: 0.003,
+  taxesAndDuties: 0.018,
+  miscellaneous: 0.01,
+} as const;
+
 export function createDefaultOperating(
   type: RestaurantTypeId,
   city: CityId,
   locationType: LocationTypeId,
   surfaceSqm: number,
+  estimatedAnnualRevenue: number,
 ): OperatingAssumptions {
   const rentMonthly = estimateMonthlyRent(city, locationType, surfaceSqm);
   const foodCost = FOOD_COST_BY_TYPE[type].value;
+  const monthlyRevenue = Math.max(0, estimatedAnnualRevenue) / 12;
+  const share = (rate: number, floor: number) =>
+    Math.round(Math.max(monthlyRevenue * rate, floor));
 
   return {
     foodCostRate: foodCost,
@@ -250,17 +381,18 @@ export function createDefaultOperating(
     platformCommissionRate: BENCHMARKS.platformCommission.value,
     paymentFeeRate: BENCHMARKS.paymentFees.value,
     rentMonthly,
-    rentChargesMonthly: rentMonthly * 0.12,
-    utilitiesMonthly: surfaceSqm * 4.5,
-    insuranceMonthly: 250,
-    accountingMonthly: 350,
-    softwareMonthly: 180,
+    rentChargesMonthly: Math.round(rentMonthly * 0.12),
+    utilitiesMonthly: share(OPERATING_COST_SHARE.utilities, surfaceSqm * 6),
+    insuranceMonthly: share(OPERATING_COST_SHARE.insurance, 180),
+    accountingMonthly: 400,
+    softwareMonthly: 200,
     telecomMonthly: 90,
-    cleaningMonthly: 450,
-    maintenanceMonthly: 300,
-    marketingMonthly: 600,
-    bankingMonthly: 80,
-    miscellaneousMonthly: 200,
+    cleaningMonthly: share(OPERATING_COST_SHARE.cleaning, 200),
+    maintenanceMonthly: share(OPERATING_COST_SHARE.maintenance, 200),
+    marketingMonthly: share(OPERATING_COST_SHARE.marketing, 250),
+    bankingMonthly: share(OPERATING_COST_SHARE.banking, 60),
+    taxesAndDutiesMonthly: share(OPERATING_COST_SHARE.taxesAndDuties, 150),
+    miscellaneousMonthly: share(OPERATING_COST_SHARE.miscellaneous, 150),
   };
 }
 
@@ -271,7 +403,8 @@ export function createDefaultProfile(
   const city = overrides.city ?? 'lyon';
   const locationType = overrides.locationType ?? 'city_center';
   const surfaceSqm = overrides.surfaceSqm ?? 120;
-  const ticket = createTicketBreakdown(restaurantType);
+  const ticket = createTicketBreakdown(restaurantType, city, locationType);
+  const channelMix = CHANNEL_MIX_BY_TYPE[restaurantType];
 
   return {
     name: overrides.name ?? 'Mon restaurant',
@@ -281,12 +414,13 @@ export function createDefaultProfile(
     cuisineType: overrides.cuisineType ?? 'french',
     seatingCapacity: overrides.seatingCapacity ?? 50,
     openingDaysPerWeek: overrides.openingDaysPerWeek ?? BENCHMARKS.openingDaysPerWeek.value,
-    servicesPerDay: overrides.servicesPerDay ?? 2,
-    openingWeeksPerYear: overrides.openingWeeksPerYear ?? 52,
-    occupancyRate: overrides.occupancyRate ?? OCCUPANCY_BY_TYPE[restaurantType].value,
+    servicesPerDay: overrides.servicesPerDay ?? SERVICES_PER_DAY_BY_TYPE[restaurantType],
+    openingWeeksPerYear: overrides.openingWeeksPerYear ?? 50,
+    occupancyRate:
+      overrides.occupancyRate ?? getOccupancyBenchmark(restaurantType, locationType).value,
     surfaceSqm,
-    takeawayShare: overrides.takeawayShare ?? (restaurantType === 'dark_kitchen' ? 0 : 0.08),
-    deliveryShare: overrides.deliveryShare ?? (restaurantType === 'dark_kitchen' ? 0.7 : 0.05),
+    takeawayShare: overrides.takeawayShare ?? channelMix.takeawayShare,
+    deliveryShare: overrides.deliveryShare ?? channelMix.deliveryShare,
     ticketBreakdown: overrides.ticketBreakdown ?? ticket,
     servicePattern: overrides.servicePattern ?? {
       lunchOccupancy: 0.7,
@@ -297,6 +431,23 @@ export function createDefaultProfile(
       weekendShare: 0.35,
     },
   };
+}
+
+/** Couverts servis par jour pour un profil donné. */
+export function getCoversPerDay(profile: RestaurantProfile): number {
+  return profile.seatingCapacity * profile.occupancyRate * profile.servicesPerDay;
+}
+
+/**
+ * Estimation rapide du chiffre d'affaires HT, utilisée pour dimensionner les
+ * charges d'exploitation par défaut avant le premier calcul complet.
+ */
+export function estimateAnnualRevenue(profile: RestaurantProfile): number {
+  const ticketTTC = Object.values(profile.ticketBreakdown).reduce((sum, part) => sum + part, 0);
+  const annualCovers =
+    getCoversPerDay(profile) * profile.openingDaysPerWeek * profile.openingWeeksPerYear;
+
+  return (annualCovers * ticketTTC) / (1 + BENCHMARKS.vatFood.value);
 }
 
 export function createDefaultFinancing(capex: CapexItem): Financing {
@@ -332,8 +483,9 @@ export function createDefaultSimulation(
       profile.city,
       profile.locationType,
       profile.surfaceSqm,
+      estimateAnnualRevenue(profile),
     ),
-    staff: createStaffForType(profile.restaurantType),
+    staff: createStaffForType(profile.restaurantType, getCoversPerDay(profile)),
     capex,
     usefulLife: DEFAULT_USEFUL_LIFE,
     financing: createDefaultFinancing(capex),
@@ -342,32 +494,47 @@ export function createDefaultSimulation(
 }
 
 export const DEMO_SCENARIOS = {
-  parisTraditional: createDefaultSimulation({
-    name: 'Bistrot parisien',
+  parisBistro: createDefaultSimulation({
+    name: 'Petit bistrot parisien',
     city: 'paris',
     locationType: 'city_center',
     restaurantType: 'traditional',
-    seatingCapacity: 45,
-    surfaceSqm: 95,
+    seatingCapacity: 32,
+    surfaceSqm: 70,
     occupancyRate: 0.62,
   }),
   lyonTraditional: createDefaultSimulation({
-    name: 'Restaurant traditionnel Lyon',
+    name: 'Restaurant traditionnel — Lyon',
     city: 'lyon',
     locationType: 'city_center',
     restaurantType: 'traditional',
     seatingCapacity: 50,
     surfaceSqm: 120,
-    occupancyRate: 0.65,
+    occupancyRate: 0.6,
   }),
-  mediumCityFastFood: createDefaultSimulation({
-    name: 'Fast food ville moyenne',
+  mediumCityTraditional: createDefaultSimulation({
+    name: 'Restaurant traditionnel — ville moyenne',
+    city: 'medium_city',
+    locationType: 'city_center',
+    restaurantType: 'traditional',
+    seatingCapacity: 60,
+    surfaceSqm: 140,
+    occupancyRate: 0.58,
+  }),
+  fastFood: createDefaultSimulation({
+    name: 'Fast food — zone commerciale',
     city: 'medium_city',
     locationType: 'commercial_zone',
     restaurantType: 'fast_food',
-    seatingCapacity: 35,
-    surfaceSqm: 80,
-    occupancyRate: 0.8,
-    servicesPerDay: 1,
+    seatingCapacity: 40,
+    surfaceSqm: 90,
+    occupancyRate: 0.84,
   }),
 };
+
+export const DEMO_SCENARIO_OPTIONS = [
+  { id: 'parisBistro' as const, label: 'Bistrot parisien' },
+  { id: 'lyonTraditional' as const, label: 'Traditionnel Lyon' },
+  { id: 'mediumCityTraditional' as const, label: 'Ville moyenne' },
+  { id: 'fastFood' as const, label: 'Fast food' },
+];

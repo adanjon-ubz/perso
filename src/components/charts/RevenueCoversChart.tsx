@@ -1,39 +1,73 @@
 'use client';
 
 import {
+  Area,
+  AreaChart,
   CartesianGrid,
-  Line,
-  LineChart,
+  ReferenceLine,
   ResponsiveContainer,
   Tooltip,
   XAxis,
   YAxis,
 } from 'recharts';
 import { Card, CardHeader } from '@/components/ui/Card';
-import { formatCurrency } from '@/lib/utils/format';
+import {
+  CHART_COLORS,
+  CHART_TOOLTIP_STYLE,
+  formatAxisEuro,
+  tooltipCoversLabel,
+  tooltipEuro,
+} from '@/components/charts/chart-theme';
+import { formatNumber } from '@/lib/utils/format';
 import type { SimulationResult } from '@/types/models';
 
+/** Graphique 5 — chiffre d'affaires annuel selon le nombre de couverts par jour. */
 export function RevenueCoversChart({ result }: { result: SimulationResult }) {
-  const chartData = result.occupancyCurve.map((point) => ({
+  const data = result.occupancyCurve.map((point) => ({
     coversPerDay: Math.round(point.coversPerDay),
     revenue: point.revenue,
   }));
 
+  const currentCovers = Math.round(result.ratios.coversPerDay);
+
   return (
     <Card>
-      <CardHeader title="CA selon le nombre de couverts" subtitle="Projection annuelle" />
-      <div className="h-72">
+      <CardHeader
+        title="Chiffre d'affaires selon les couverts"
+        subtitle={`Situation actuelle : ${formatNumber(currentCovers)} couverts / jour.`}
+      />
+      <div className="h-[280px]">
         <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={chartData}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-            <XAxis dataKey="coversPerDay" />
-            <YAxis tickFormatter={(value) => formatCurrency(value, true)} />
+          <AreaChart data={data} margin={{ top: 8, right: 12, left: 4, bottom: 4 }}>
+            <defs>
+              <linearGradient id="revenueFill" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor={CHART_COLORS.revenue} stopOpacity={0.25} />
+                <stop offset="100%" stopColor={CHART_COLORS.revenue} stopOpacity={0.02} />
+              </linearGradient>
+            </defs>
+            <CartesianGrid strokeDasharray="3 3" stroke={CHART_COLORS.grid} vertical={false} />
+            <XAxis dataKey="coversPerDay" tick={{ fontSize: 11 }} />
+            <YAxis tickFormatter={formatAxisEuro} tick={{ fontSize: 11 }} width={56} />
             <Tooltip
-              formatter={(value) => formatCurrency(Number(value ?? 0), true)}
-              labelFormatter={(label) => `${label} couverts / jour`}
+              contentStyle={CHART_TOOLTIP_STYLE}
+              formatter={tooltipEuro}
+              labelFormatter={tooltipCoversLabel}
             />
-            <Line type="monotone" dataKey="revenue" name="CA annuel" stroke="#0369a1" strokeWidth={3} dot={false} />
-          </LineChart>
+            <ReferenceLine
+              x={currentCovers}
+              stroke={CHART_COLORS.reference}
+              strokeDasharray="4 4"
+              label={{ value: 'Votre hypothèse', fontSize: 11, position: 'insideTopRight' }}
+            />
+            <Area
+              type="monotone"
+              dataKey="revenue"
+              name="CA annuel HT"
+              stroke={CHART_COLORS.revenue}
+              fill="url(#revenueFill)"
+              strokeWidth={3}
+            />
+          </AreaChart>
         </ResponsiveContainer>
       </div>
     </Card>

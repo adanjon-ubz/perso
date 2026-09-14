@@ -62,18 +62,23 @@ export function calculatePnL(input: SimulationInput, occupancyRate?: number): Pn
   };
 }
 
+/**
+ * Cash-flow simplifié. Les flux récurrents d'une année d'exploitation sont
+ * séparés des flux de démarrage : le remboursement du principal ne transite
+ * pas par le compte de résultat mais pèse sur la trésorerie.
+ */
 export function calculateCashFlow(input: SimulationInput, pnl: PnLResult): CashFlowResult {
   const operatingCashFlow = pnl.netIncome + pnl.depreciation.total;
-  const investingCashFlow = -getTotalCapex(input);
-  const financingCashFlow =
-    input.financing.equity +
-    input.financing.debt -
-    pnl.financing.annualPrincipalRepayment;
+  const debtService = pnl.financing.annualPrincipalRepayment;
+  const initialInvestment = getTotalCapex(input);
+  const initialFunding = input.financing.equity + input.financing.debt;
 
   return {
     operatingCashFlow,
-    investingCashFlow,
-    financingCashFlow,
-    netCashFlow: operatingCashFlow + investingCashFlow + financingCashFlow,
+    debtService,
+    freeCashFlow: operatingCashFlow - debtService,
+    initialInvestment,
+    initialFunding,
+    initialCashPosition: initialFunding - initialInvestment,
   };
 }

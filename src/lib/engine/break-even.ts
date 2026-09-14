@@ -3,18 +3,27 @@ import {
   calculateDepreciation,
   calculateFinancingCosts,
 } from '@/lib/engine/costs';
-import { calculateCovers } from '@/lib/engine/revenue';
 import type { BreakEvenResult, SimulationInput } from '@/types/models';
 
+/**
+ * Seuil de rentabilité avant impôt : niveau d'activité auquel la marge sur
+ * coûts variables couvre exactement les charges fixes (personnel, charges
+ * d'exploitation, amortissements et intérêts).
+ *
+ * La masse salariale est traitée comme une charge fixe : à court terme, une
+ * variation de fréquentation ne modifie pas l'effectif en place.
+ */
 export function calculateBreakEven(input: SimulationInput): BreakEvenResult {
   const { revenue, variableCosts, laborCosts, fixedCosts } = calculateCostsSnapshot(input);
   const depreciation = calculateDepreciation(input);
   const financing = calculateFinancingCosts(input);
-  const totalFixedCosts =
+
+  const fixedCostBase =
     laborCosts.totalEmployerCost +
     fixedCosts.total +
     depreciation.total +
     financing.annualInterest;
+
   const variableCostRate =
     revenue.totalRevenue > 0 ? variableCosts.total / revenue.totalRevenue : 0;
   const contributionMarginRate = 1 - variableCostRate;
@@ -24,33 +33,46 @@ export function calculateBreakEven(input: SimulationInput): BreakEvenResult {
       breakEvenRevenue: Infinity,
       breakEvenCoversAnnual: Infinity,
       breakEvenCoversPerDay: Infinity,
-      breakEvenOccupancy: 1,
+      breakEvenOccupancy: Infinity,
+      isAchievable: false,
+      fixedCostBase,
       variableCostRate,
       contributionMarginRate,
     };
   }
 
-  const breakEvenRevenue = totalFixedCosts / contributionMarginRate;
-  const revenuePerBaseCover =
+  const breakEvenRevenue = fixedCostBase / contributionMarginRate;
+  const revenuePerCover =
     revenue.annualCovers > 0 ? revenue.totalRevenue / revenue.annualCovers : 0;
-  const breakEvenCoversAnnual =
-    revenuePerBaseCover > 0 ? breakEvenRevenue / revenuePerBaseCover : Infinity;
-  const openingDays = input.profile.openingDaysPerWeek * input.profile.openingWeeksPerYear;
-  const breakEvenCoversPerDay =
-    openingDays > 0 ? breakEvenCoversAnnual / openingDays : Infinity;
 
-  const currentCovers = calculateCovers(input.profile);
+  if (revenuePerCover <= 0) {
+    return {
+      breakEvenRevenue,
+      breakEvenCoversAnnual: Infinity,
+      breakEvenCoversPerDay: Infinity,
+      breakEvenOccupancy: Infinity,
+      isAchievable: false,
+      fixedCostBase,
+      variableCostRate,
+      contributionMarginRate,
+    };
+  }
+
+  const breakEvenCoversAnnual = breakEvenRevenue / revenuePerCover;
+  const breakEvenCoversPerDay =
+    revenue.openingDaysPerYear > 0 ? breakEvenCoversAnnual / revenue.openingDaysPerYear : Infinity;
+
+  const dailyCapacity = input.profile.seatingCapacity * input.profile.servicesPerDay;
   const breakEvenOccupancy =
-    currentCovers.coversPerService > 0
-      ? breakEvenCoversPerDay /
-        (input.profile.servicesPerDay * input.profile.seatingCapacity)
-      : 1;
+    dailyCapacity > 0 ? breakEvenCoversPerDay / dailyCapacity : Infinity;
 
   return {
     breakEvenRevenue,
     breakEvenCoversAnnual,
     breakEvenCoversPerDay,
-    breakEvenOccupancy: Math.min(1, Math.max(0, breakEvenOccupancy)),
+    breakEvenOccupancy,
+    isAchievable: Number.isFinite(breakEvenOccupancy) && breakEvenOccupancy <= 1,
+    fixedCostBase,
     variableCostRate,
     contributionMarginRate,
   };

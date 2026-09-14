@@ -9,6 +9,8 @@ export interface BenchmarkValue {
   year: number;
   type: BenchmarkType;
   label?: string;
+  url?: string;
+  note?: string;
 }
 
 export type CityId =
@@ -118,6 +120,8 @@ export interface OperatingAssumptions {
   maintenanceMonthly: number;
   marketingMonthly: number;
   bankingMonthly: number;
+  /** CFE, taxe foncière, taxes locales et assimilées. */
+  taxesAndDutiesMonthly: number;
   miscellaneousMonthly: number;
 }
 
@@ -184,20 +188,26 @@ export interface SimulationInput {
 }
 
 export interface RevenueBreakdown {
+  /** Montants hors taxes, sauf mention contraire. */
   foodRevenue: number;
   beverageRevenue: number;
   alcoholRevenue: number;
+  dineInRevenue: number;
   takeawayRevenue: number;
   deliveryRevenue: number;
   totalRevenueTTC: number;
+  /** Chiffre d'affaires HT : ligne haute du compte de résultat. */
   totalRevenue: number;
   totalRevenueHT: number;
+  vatCollected: number;
+  averageVatRate: number;
   averageTicketTTC: number;
   averageTicketHT: number;
   coversPerService: number;
   coversPerDay: number;
   coversPerWeek: number;
   annualCovers: number;
+  openingDaysPerYear: number;
 }
 
 export interface VariableCosts {
@@ -212,15 +222,24 @@ export interface VariableCosts {
 export interface StaffCostLine {
   role: StaffRoleId;
   count: number;
+  fte: number;
   grossAnnualSalary: number;
+  mealBenefit: number;
   employerCostRate: number;
+  employerContributions: number;
   annualEmployerCost: number;
+  conventionalMinimum: number;
+  belowConventionalMinimum: boolean;
+  hourlyGross: number;
 }
 
 export interface LaborCosts {
   lines: StaffCostLine[];
+  totalHeadcount: number;
+  totalFte: number;
   totalGross: number;
   totalEmployerCost: number;
+  hasSalaryBelowMinimum: boolean;
 }
 
 export interface FixedCosts {
@@ -235,6 +254,7 @@ export interface FixedCosts {
   maintenance: number;
   marketing: number;
   banking: number;
+  taxesAndDuties: number;
   miscellaneous: number;
   total: number;
 }
@@ -252,7 +272,8 @@ export interface DepreciationBreakdown {
 export interface FinancingCosts {
   annualInterest: number;
   annualPrincipalRepayment: number;
-  remainingDebt: number;
+  averageOutstandingDebt: number;
+  totalInterestOverLoan: number;
 }
 
 export interface PnLResult {
@@ -277,16 +298,27 @@ export interface BreakEvenResult {
   breakEvenRevenue: number;
   breakEvenCoversAnnual: number;
   breakEvenCoversPerDay: number;
+  /** Taux de remplissage requis. Peut dépasser 100 % si le modèle n'est pas atteignable. */
   breakEvenOccupancy: number;
+  isAchievable: boolean;
+  fixedCostBase: number;
   variableCostRate: number;
   contributionMarginRate: number;
 }
 
 export interface CashFlowResult {
+  /** Récurrent : résultat net + amortissements. */
   operatingCashFlow: number;
-  investingCashFlow: number;
-  financingCashFlow: number;
-  netCashFlow: number;
+  /** Récurrent : remboursement du principal. */
+  debtService: number;
+  /** Récurrent : cash disponible après service de la dette. */
+  freeCashFlow: number;
+  /** Démarrage : investissement initial. */
+  initialInvestment: number;
+  /** Démarrage : apport + emprunt. */
+  initialFunding: number;
+  /** Démarrage : trésorerie restante après investissement. */
+  initialCashPosition: number;
 }
 
 export interface DriverImpact {
@@ -316,21 +348,38 @@ export interface SensitivityCell {
   netIncome: number;
 }
 
+export interface OccupancyCurvePoint {
+  occupancy: number;
+  netIncome: number;
+  ebitda: number;
+  revenue: number;
+  totalCosts: number;
+  coversPerDay: number;
+}
+
+/** Ratios de pilotage dérivés du P&L, calculés une seule fois par le moteur. */
+export interface SimulationRatios {
+  monthlyRevenue: number;
+  coversPerDay: number;
+  foodCostShare: number;
+  variableCostShare: number;
+  laborShare: number;
+  rentShare: number;
+  primeCost: number;
+  returnOnEquity: number;
+  /** Années nécessaires pour récupérer l'investissement via le cash-flow. */
+  paybackYears: number;
+}
+
 export interface SimulationResult {
   pnl: PnLResult;
   breakEven: BreakEvenResult;
   cashFlow: CashFlowResult;
+  ratios: SimulationRatios;
   drivers: DriverImpact[];
   insights: Insight[];
   scenarios: ScenarioResult[];
   sensitivity: SensitivityCell[];
-  occupancyCurve: Array<{
-    occupancy: number;
-    netIncome: number;
-    ebitda: number;
-    revenue: number;
-    coversPerDay: number;
-  }>;
+  occupancyCurve: OccupancyCurvePoint[];
   totalCapex: number;
-  returnOnEquity: number;
 }

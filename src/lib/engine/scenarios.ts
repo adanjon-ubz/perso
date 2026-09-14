@@ -7,27 +7,59 @@ function cloneInput(input: SimulationInput): SimulationInput {
   return JSON.parse(JSON.stringify(input)) as SimulationInput;
 }
 
+/**
+ * Écarts appliqués aux hypothèses centrales pour construire les deux scénarios
+ * encadrants. Ils restent volontairement modérés : l'objectif est de tester la
+ * robustesse du modèle, pas de simuler une rupture d'activité.
+ */
+export const SCENARIO_DELTAS = {
+  pessimistic: {
+    occupancyPoints: -0.12,
+    ticketFactor: 0.92,
+    foodCostPoints: 0.03,
+    salaryFactor: 1.05,
+  },
+  optimistic: {
+    occupancyPoints: 0.1,
+    ticketFactor: 1.08,
+    foodCostPoints: -0.02,
+    /** Meilleure productivité : même service avec moins d'heures payées. */
+    hoursFactor: 0.95,
+  },
+} as const;
+
 export function calculateScenarios(input: SimulationInput): ScenarioResult[] {
+  const down = SCENARIO_DELTAS.pessimistic;
   const pessimistic = cloneInput(input);
-  pessimistic.profile.occupancyRate = Math.max(0.2, input.profile.occupancyRate - 0.12);
+  pessimistic.profile.occupancyRate = Math.max(
+    0.05,
+    input.profile.occupancyRate + down.occupancyPoints,
+  );
   pessimistic.profile.ticketBreakdown = scaleTicket(
     pessimistic.profile.ticketBreakdown,
-    getAverageTicketTTC(input.profile) * 0.92,
+    getAverageTicketTTC(input.profile) * down.ticketFactor,
   );
-  pessimistic.operating.foodCostRate += 0.03;
+  pessimistic.operating.foodCostRate += down.foodCostPoints;
   pessimistic.staff = pessimistic.staff.map((member) => ({
     ...member,
-    grossMonthlySalary: member.grossMonthlySalary * 1.05,
+    grossMonthlySalary: member.grossMonthlySalary * down.salaryFactor,
   }));
 
+  const up = SCENARIO_DELTAS.optimistic;
   const optimistic = cloneInput(input);
-  optimistic.profile.occupancyRate = Math.min(1, input.profile.occupancyRate + 0.1);
+  optimistic.profile.occupancyRate = Math.min(1, input.profile.occupancyRate + up.occupancyPoints);
   optimistic.profile.ticketBreakdown = scaleTicket(
     optimistic.profile.ticketBreakdown,
-    getAverageTicketTTC(input.profile) * 1.08,
+    getAverageTicketTTC(input.profile) * up.ticketFactor,
   );
-  optimistic.operating.foodCostRate = Math.max(0.2, input.operating.foodCostRate - 0.02);
-  optimistic.operating.marketingMonthly *= 1.2;
+  optimistic.operating.foodCostRate = Math.max(
+    0.1,
+    input.operating.foodCostRate + up.foodCostPoints,
+  );
+  optimistic.staff = optimistic.staff.map((member) => ({
+    ...member,
+    weeklyHours: member.weeklyHours * up.hoursFactor,
+  }));
 
   const definitions = [
     { id: 'pessimistic' as const, label: 'Pessimiste', data: pessimistic },

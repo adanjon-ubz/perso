@@ -1,19 +1,31 @@
-import { calculateBreakEven } from '@/lib/engine/break-even';
 import { calculatePnL } from '@/lib/engine/pnl';
 import { getAverageTicketTTC } from '@/lib/engine/revenue';
-import type { DriverImpact, SensitivityCell, SimulationInput } from '@/types/models';
+import type {
+  DriverImpact,
+  OccupancyCurvePoint,
+  SensitivityCell,
+  SimulationInput,
+} from '@/types/models';
 
+/**
+ * Matrice de sensibilité centrée sur les hypothèses courantes : le ticket varie
+ * de ±15 % et le remplissage de ±20 points, de façon à toujours encadrer le
+ * scénario de base.
+ */
 export function calculateSensitivity(input: SimulationInput): SensitivityCell[] {
   const baseTicket = getAverageTicketTTC(input.profile);
-  const tickets = [
-    baseTicket - 6,
-    baseTicket - 3,
-    baseTicket,
-    baseTicket + 3,
-    baseTicket + 6,
-  ].filter((ticket) => ticket > 0);
+  const ticketStep = Math.max(1, Math.round(baseTicket * 0.075 * 2) / 2);
+  const tickets = [-2, -1, 0, 1, 2]
+    .map((offset) => Math.round((baseTicket + offset * ticketStep) * 2) / 2)
+    .filter((ticket) => ticket > 0);
 
-  const occupancies = [0.4, 0.5, 0.6, 0.7, 0.8];
+  const baseOccupancy = input.profile.occupancyRate;
+  const occupancies = [...new Set(
+    [-0.2, -0.1, 0, 0.1, 0.2].map((offset) =>
+      Math.round(Math.min(1, Math.max(0.15, baseOccupancy + offset)) * 100) / 100,
+    ),
+  )];
+
   const cells: SensitivityCell[] = [];
 
   for (const occupancy of occupancies) {
@@ -87,7 +99,7 @@ export function calculateDrivers(input: SimulationInput): DriverImpact[] {
       },
       {
         id: 'food_cost',
-        label: '+5 % de coût matière',
+        label: '+5 points de coût matière',
         mutate: (draft) => {
           draft.operating.foodCostRate += 0.05;
         },
@@ -128,38 +140,31 @@ export function calculateDrivers(input: SimulationInput): DriverImpact[] {
   return drivers.sort((a, b) => Math.abs(b.impact) - Math.abs(a.impact));
 }
 
-export function calculateOccupancyCurve(input: SimulationInput) {
-  const points = [];
+/**
+ * Courbe de rentabilité de 10 % à 100 % de remplissage : chiffre d'affaires,
+ * coûts totaux, EBITDA et résultat net. Sert au graphique du point mort.
+ */
+export function calculateOccupancyCurve(input: SimulationInput): OccupancyCurvePoint[] {
+  const points: OccupancyCurvePoint[] = [];
 
-  for (let occupancy = 0.1; occupancy <= 1; occupancy += 0.05) {
+  for (let step = 2; step <= 20; step += 1) {
+    const occupancy = step / 20;
     const pnl = calculatePnL(input, occupancy);
+
     points.push({
       occupancy,
       netIncome: pnl.netIncome,
       ebitda: pnl.ebitda,
       revenue: pnl.revenue.totalRevenue,
+      totalCosts:
+        pnl.variableCosts.total +
+        pnl.laborCosts.totalEmployerCost +
+        pnl.fixedCosts.total +
+        pnl.depreciation.total +
+        pnl.financing.annualInterest,
       coversPerDay: pnl.revenue.coversPerDay,
     });
   }
-
-  return points;
-}
-
-export function calculateBreakEvenCurve(input: SimulationInput) {
-  const breakEven = calculateBreakEven(input);
-  const points = calculateOccupancyCurve(input).map((point) => {
-    const { revenue, variableCosts, laborCosts, fixedCosts } = calculatePnL(input, point.occupancy);
-    const totalCosts =
-      variableCosts.total + laborCosts.totalEmployerCost + fixedCosts.total;
-
-    return {
-      occupancy: point.occupancy,
-      revenue: revenue.totalRevenue,
-      totalCosts,
-      netIncome: point.netIncome,
-      breakEvenRevenue: breakEven.breakEvenRevenue,
-    };
-  });
 
   return points;
 }

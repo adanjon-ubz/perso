@@ -1,5 +1,8 @@
 import { cn } from '@/lib/utils/cn';
 
+const CONTROL_CLASS =
+  'w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/30';
+
 export function Label({ children, hint }: { children: React.ReactNode; hint?: string }) {
   return (
     <div className="mb-1.5">
@@ -16,6 +19,7 @@ export function NumberInput({
   min,
   max,
   step = 1,
+  ariaLabel,
   className,
 }: {
   value: number;
@@ -24,18 +28,23 @@ export function NumberInput({
   min?: number;
   max?: number;
   step?: number;
+  ariaLabel?: string;
   className?: string;
 }) {
   return (
     <div className={cn('relative', className)}>
       <input
         type="number"
-        value={Number.isFinite(value) ? value : 0}
+        aria-label={ariaLabel}
+        value={Number.isFinite(value) ? Math.round(value * 100) / 100 : 0}
         min={min}
         max={max}
         step={step}
-        onChange={(event) => onChange(Number(event.target.value))}
-        className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none ring-emerald-500 transition focus:ring-2"
+        onChange={(event) => {
+          const next = Number(event.target.value);
+          onChange(Number.isFinite(next) ? next : 0);
+        }}
+        className={cn(CONTROL_CLASS, suffix && 'pr-14')}
       />
       {suffix ? (
         <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400">
@@ -50,16 +59,19 @@ export function SelectInput<T extends string>({
   value,
   onChange,
   options,
+  ariaLabel,
 }: {
   value: T;
   onChange: (value: T) => void;
   options: Array<{ id: T; label: string }>;
+  ariaLabel?: string;
 }) {
   return (
     <select
+      aria-label={ariaLabel}
       value={value}
       onChange={(event) => onChange(event.target.value as T)}
-      className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none ring-emerald-500 transition focus:ring-2"
+      className={CONTROL_CLASS}
     >
       {options.map((option) => (
         <option key={option.id} value={option.id}>
@@ -77,6 +89,7 @@ export function SliderInput({
   max,
   step,
   formatValue,
+  ariaLabel,
 }: {
   value: number;
   onChange: (value: number) => void;
@@ -84,17 +97,21 @@ export function SliderInput({
   max: number;
   step: number;
   formatValue?: (value: number) => string;
+  ariaLabel?: string;
 }) {
+  const display = formatValue ?? ((input: number) => String(input));
+
   return (
     <div>
-      <div className="mb-2 flex items-center justify-between text-sm">
-        <span className="text-slate-500">Valeur</span>
-        <span className="font-semibold text-slate-900">
-          {formatValue ? formatValue(value) : value}
+      <div className="mb-2 flex items-baseline justify-between">
+        <span className="text-xl font-bold tabular-nums text-slate-900">{display(value)}</span>
+        <span className="text-[11px] text-slate-400">
+          {display(min)} – {display(max)}
         </span>
       </div>
       <input
         type="range"
+        aria-label={ariaLabel}
         min={min}
         max={max}
         step={step}

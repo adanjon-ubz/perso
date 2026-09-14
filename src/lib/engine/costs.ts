@@ -46,6 +46,7 @@ export function calculateFixedCosts(operating: OperatingAssumptions): FixedCosts
   const maintenance = operating.maintenanceMonthly * 12;
   const marketing = operating.marketingMonthly * 12;
   const banking = operating.bankingMonthly * 12;
+  const taxesAndDuties = operating.taxesAndDutiesMonthly * 12;
   const miscellaneous = operating.miscellaneousMonthly * 12;
 
   const total =
@@ -60,6 +61,7 @@ export function calculateFixedCosts(operating: OperatingAssumptions): FixedCosts
     maintenance +
     marketing +
     banking +
+    taxesAndDuties +
     miscellaneous;
 
   return {
@@ -74,6 +76,7 @@ export function calculateFixedCosts(operating: OperatingAssumptions): FixedCosts
     maintenance,
     marketing,
     banking,
+    taxesAndDuties,
     miscellaneous,
     total,
   };
@@ -103,16 +106,33 @@ export function calculateDepreciation(input: SimulationInput): DepreciationBreak
   };
 }
 
+/**
+ * Coût du financement sur une année d'exploitation « de croisière ».
+ *
+ * L'amortissement du capital étant linéaire, l'encours moyen sur la durée du
+ * prêt vaut dette × (n + 1) / (2n). Retenir cet encours plutôt que la dette
+ * initiale évite de surestimer les intérêts sur toute la durée du prêt.
+ */
 export function calculateFinancingCosts(input: SimulationInput): FinancingCosts {
-  const { financing } = input;
-  const annualInterest = financing.debt * financing.interestRate;
-  const annualPrincipalRepayment =
-    financing.loanDurationYears > 0 ? financing.debt / financing.loanDurationYears : 0;
+  const { debt, interestRate, loanDurationYears } = input.financing;
+
+  if (debt <= 0 || loanDurationYears <= 0) {
+    return {
+      annualInterest: 0,
+      annualPrincipalRepayment: 0,
+      averageOutstandingDebt: 0,
+      totalInterestOverLoan: 0,
+    };
+  }
+
+  const averageOutstandingDebt = (debt * (loanDurationYears + 1)) / (2 * loanDurationYears);
+  const annualInterest = averageOutstandingDebt * interestRate;
 
   return {
     annualInterest,
-    annualPrincipalRepayment,
-    remainingDebt: Math.max(0, financing.debt - annualPrincipalRepayment),
+    annualPrincipalRepayment: debt / loanDurationYears,
+    averageOutstandingDebt,
+    totalInterestOverLoan: annualInterest * loanDurationYears,
   };
 }
 
